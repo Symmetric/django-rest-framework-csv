@@ -1,6 +1,8 @@
 import csv
 import codecs
 import io
+
+import re
 import six
 
 from django.conf import settings
@@ -44,6 +46,7 @@ def universal_newlines(stream):
             yield line
 
 
+DOTTED_STRING_RE = re.compile('([^.]+)\.(.+)')
 class CSVParser(BaseParser):
     """
     Parses CSV serialized data.
@@ -62,8 +65,38 @@ class CSVParser(BaseParser):
             rows = unicode_csv_reader(universal_newlines(stream), delimiter=delimiter, charset=encoding)
             data = OrderedRows(next(rows))
             for row in rows:
-                row_data = dict(zip(data.header, row))
+                row_data = {}
+                for column_header, column_data in zip(data.header, row):
+                    self._add_column_data(row_data, column_header, column_data)
                 data.append(row_data)
             return data
         except Exception as exc:
             raise ParseError('CSV parse error - %s' % str(exc))
+
+    def _add_column_data(self, row_data, column_header, column_data):
+        """Add column data to the appropriate key of the row_data dict.
+
+        If column_header is just a string like "name", add the data to
+        row_data['name'].
+
+        If column_header is a nested attribute, like 'personal_information.address',
+        add it to a nested dict shared with other headers sharing the same parent.
+        """
+        match = DOTTED_STRING_RE.match(column_header)
+        if match:
+            parent_field_name = match.group(1)
+            rest_of_field_name = match.group(2)
+
+            if parent_field_name in row_data:
+                field_data = row_data[parent_field_name]
+                if not isinstance(field_data, dict):
+                    raise ParseError('Duplicate field name: ' + parent_field_name)
+            else:
+                field_data = {}
+                row_data[parent_field_name] = field_data
+
+            self._add_column_data(field_data, rest_of_field_name, column_data)
+        else:
+            if column_header in row_data:
+                raise ParseError('Duplicate field name: ' + column_header)
+            row_data[column_header] = column_data

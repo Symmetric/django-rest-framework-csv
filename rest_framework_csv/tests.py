@@ -2,7 +2,9 @@
 from __future__ import unicode_literals
 
 import csv
-from six import StringIO, PY3
+
+from rest_framework.exceptions import ParseError
+from six import StringIO, PY3, BytesIO
 from types import GeneratorType
 
 from django.test import TestCase
@@ -238,3 +240,28 @@ class TestCSVParser(TestCase):
 
         data = parser.parse(StringIO(csv_file))
         self.assertEqual(data, [{'col1': 'hello—goodbye', 'col2': 'here—there'}])
+
+    def test_parse_nested(self):
+        parser = CSVParser()
+        csv_file = b'a,b.first,b.second\r\nA,11,2.3\r\nB,12,2.4\r\n'
+
+        data = parser.parse(BytesIO(csv_file))
+
+        self.assertEqual(len(data), 2)
+        self.assertDictEqual(data[0], {'a': 'A', 'b': {'first': '11', 'second': '2.3'}})
+        self.assertDictEqual(data[1], {'a': 'B', 'b': {'first': '12', 'second': '2.4'}})
+
+    def test_doubly_nested(self):
+        parser = CSVParser()
+        csv_file = b'a,b.first,b.second.i,b.second.ii\r\nA,11,2.3.1,2.3.2\r\n'
+
+        data = parser.parse(BytesIO(csv_file))
+
+        self.assertEqual(len(data), 1)
+        self.assertDictEqual(data[0], {'a': 'A', 'b': {'first': '11', 'second': {'i': '2.3.1', 'ii': '2.3.2'}}})
+
+    def test_parse_nested_duplicate_fields(self):
+        parser = CSVParser()
+        csv_file = b'a,a.first\r\nA,11'
+
+        self.assertRaises(ParseError, parser.parse, BytesIO(csv_file))
